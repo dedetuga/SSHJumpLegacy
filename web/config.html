@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSH Jump</title>
+<link rel="stylesheet" href="xterm.css">
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --border:#2a2f3a; --fg:#e6e6e6;
+    --muted:#9aa4b2; --accent:#ffcc33; --ok:#4caf50; --err:#ff5252;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:10px;padding:10px 14px;
+    background:var(--panel);border-bottom:1px solid var(--border)}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header .sp{flex:1}
+  #idle{font:12px var(--mono);color:var(--muted)}
+  .wrap{display:grid;grid-template-columns:320px 1fr;gap:0;height:calc(100vh - 47px)}
+  @media(max-width:760px){.wrap{grid-template-columns:1fr;height:auto}}
+  form{padding:14px;background:var(--panel);border-right:1px solid var(--border);overflow:auto}
+  label{display:block;margin:10px 0 4px;color:var(--muted);font-size:12px}
+  input,select,textarea{width:100%;padding:8px 10px;background:var(--bg);
+    color:var(--fg);border:1px solid var(--border);border-radius:6px;font:13px var(--mono)}
+  textarea{resize:vertical;min-height:90px}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  button{margin-top:14px;width:100%;padding:10px;border:0;border-radius:6px;
+    background:var(--accent);color:#111;font-weight:700;cursor:pointer}
+  .hint{margin-top:10px;font-size:11px;color:var(--muted)}
+  .status{padding:8px 12px;font:12px var(--mono);border-top:1px solid var(--border)}
+  .status.ok{color:var(--ok)} .status.err{color:var(--err)}
+  #term{height:100%;padding:6px;background:#000}
+  @media(max-width:760px){#term{height:70vh}}
+  .keyonly,.pwonly{display:none}
+  .fp{font:11px var(--mono);color:var(--accent);word-break:break-all;
+    margin-top:8px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔐 SSH Jump <span style="color:var(--muted);font-weight:400">via Axis camera (legacy)</span></h1>
+  <div class="sp"></div>
+  <div id="idle">—</div>
+</header>
+
+<div class="wrap">
+  <form id="f" autocomplete="off">
+    <label>Target host / IP</label>
+    <div class="row">
+      <input id="host" placeholder="192.168.1.20" style="flex:3">
+      <input id="port" value="22" style="flex:1" inputmode="numeric">
+    </div>
+    <label>Username</label>
+    <input id="user" placeholder="admin">
+    <label>Authentication</label>
+    <select id="authType">
+      <option value="password">Password</option>
+      <option value="key">Private key</option>
+    </select>
+    <div class="pwonly">
+      <label>Password</label>
+      <input id="password" type="password">
+    </div>
+    <div class="keyonly">
+      <label>Private key (PEM / OpenSSH)</label>
+      <textarea id="key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+      <label>Key passphrase (optional)</label>
+      <input id="passphrase" type="password">
+    </div>
+    <button id="go" type="submit">Connect</button>
+    <div id="fp"></div>
+    <div class="hint">Idle SSH sessions are closed after <b id="tmo">30 min</b> of
+      inactivity. Only connect to devices you control on the local network.</div>
+  </form>
+
+  <div style="display:flex;flex-direction:column;min-width:0">
+    <div id="term"></div>
+    <div id="status" class="status">Ready. Fill in the details and connect.</div>
+  </div>
+</div>
+
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){return document.getElementById(id);};
+  var authSel = $("authType");
+  function syncAuth(){
+    var k = authSel.value === "key";
+    document.querySelector(".keyonly").style.display = k ? "block":"none";
+    document.querySelector(".pwonly").style.display  = k ? "none":"block";
+  }
+  authSel.addEventListener("change", syncAuth); syncAuth();
+
+  var term = new Terminal({cursorBlink:true, fontFamily:"var(--mono)", fontSize:13,
+    theme:{background:"#000000"}, scrollback:5000});
+  var fit = new FitAddon.FitAddon();
+  term.loadAddon(fit); term.open($("term")); fit.fit();
+  window.addEventListener("resize", function(){ try{fit.fit(); sendResize();}catch(e){} });
+
+  var connected = false, sid = null;
+  // Classic ACAP: one proxied endpoint, dispatched by ?op=
+  var dir = location.pathname.replace(/[^/]*$/, "");
+  function ep(op){ return dir + "control.cgi?op=" + op; }
+  var enc = new TextEncoder();
+
+  function setStatus(msg, cls){ var s=$("status"); s.textContent=msg; s.className="status"+(cls?(" "+cls):""); }
+  function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+  function sendResize(){
+    if(connected && sid){
+      fetch(ep("resize")+"&id="+sid+"&cols="+term.cols+"&rows="+term.rows, {method:"POST"}).catch(function(){});
+    }
+  }
+
+  var inbuf = [], sending = false;
+  function queueInput(u8){ inbuf.push(u8); flush(); }
+  async function flush(){
+    if(sending || !sid) return; sending = true;
+    while(inbuf.length){
+      var total = inbuf.reduce(function(n,a){return n+a.length;},0);
+      var merged = new Uint8Array(total), o = 0;
+      inbuf.forEach(function(a){ merged.set(a,o); o+=a.length; });
+      inbuf = [];
+      try{ await fetch(ep("input")+"&id="+sid, {method:"POST", body:merged}); }
+      catch(e){}
+    }
+    sending = false;
+  }
+
+  function disconnect(msg){
+    if(sid){ fetch(ep("close")+"&id="+sid, {method:"POST"}).catch(function(){}); }
+    connected = false; sid = null; $("go").textContent = "Connect";
+    if(msg) setStatus(msg, null);
+  }
+
+  async function pollLoop(){
+    while(connected && sid){
+      var r;
+      try{ r = await fetch(ep("poll")+"&id="+sid); }
+      catch(e){ await sleep(600); continue; }
+      if(r.status === 404 || r.headers.get("X-Session-Closed") === "1"){
+        if(r.status !== 404){ var b = await r.arrayBuffer(); if(b.byteLength) term.write(new Uint8Array(b)); }
+        disconnect("Connection closed."); break;
+      }
+      if(r.status === 204){ continue; }
+      var buf = await r.arrayBuffer();
+      if(buf.byteLength) term.write(new Uint8Array(buf));
+    }
+  }
+
+  $("f").addEventListener("submit", async function(ev){
+    ev.preventDefault();
+    if(connected){ disconnect("Disconnected."); return; }
+    $("fp").innerHTML = "";
+    var host = $("host").value.trim(), user = $("user").value.trim();
+    if(!host || !user){ setStatus("Host and username are required.", "err"); return; }
+    setStatus("Connecting to "+host+" ...", null);
+    var payload = {host:host, port:parseInt($("port").value,10)||22, user:user,
+      authType:authSel.value, cols:term.cols, rows:term.rows};
+    if(authSel.value === "key"){ payload.key=$("key").value; payload.passphrase=$("passphrase").value; }
+    else { payload.password=$("password").value; }
+    var r;
+    try{ r = await fetch(ep("connect"), {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)}); }
+    catch(e){ setStatus("Network error while connecting.", "err"); return; }
+    var data = {}; try{ data = await r.json(); }catch(e){}
+    if(!r.ok || data.error){ setStatus(data.error || ("Failed ("+r.status+")."), "err"); return; }
+    sid = data.id; connected = true; $("go").textContent = "Disconnect";
+    if(data.fingerprint) $("fp").innerHTML = "Host fingerprint:<br>"+data.fingerprint;
+    setStatus("connected.", "ok"); term.focus(); sendResize(); pollLoop();
+  });
+
+  term.onData(function(d){ if(connected && sid) queueInput(enc.encode(d)); });
+
+  function poll(){
+    fetch(ep("health")).then(function(r){return r.json();}).then(function(j){
+      $("tmo").textContent = j.idleTimeout;
+      var mtch = /(\d+)m/.exec(j.idleTimeout), tmoSec = mtch ? parseInt(mtch[1],10)*60 : 1800;
+      var remain = Math.max(0, tmoSec - j.idleSeconds), mm = Math.floor(remain/60), ss = remain%60;
+      $("idle").textContent = "sessions: "+j.sessions+(j.sessions>0?(" · idle closes in "+mm+"m"+(ss<10?"0":"")+ss+"s"):"");
+    }).catch(function(){ $("idle").textContent = "daemon unreachable"; });
+  }
+  poll(); setInterval(poll, 5000);
+})();
+</script>
+</body>
+</html>

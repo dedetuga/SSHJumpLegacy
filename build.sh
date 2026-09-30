@@ -96,14 +96,14 @@ package(){
   rm -rf "${stage}"; mkdir -p "${stage}/bin" "${stage}/html"
   cp "${ROOT}/packaging/package.conf" "${ROOT}/packaging/cgi.txt" \
      "${ROOT}/packaging/param.conf"   "${ROOT}/packaging/LICENSE" \
-     "${ROOT}/packaging/zz_${APP}_proxy.conf" "${stage}/"
+     "${ROOT}/packaging/zz_${APP}_proxy.conf" "${ROOT}/packaging/postinstall.sh" "${stage}/"
   cp "${OUT}/${APP}"     "${stage}/${APP}"        # PIE launcher (package root)
   cp "${OUT}/bin/${APP}" "${stage}/bin/${APP}"    # real Go daemon
   cp "${ROOT}"/web/*     "${stage}/html/"
   chmod 755 "${stage}/${APP}" "${stage}/bin/${APP}"
   local eap="${OUT}/${APP}_${VER_MAJOR}_${VER_MINOR}_${VER_MICRO}_${soc}_mipsisa32r2el.eap"
   ( cd "${stage}" && tar czf "${eap}" package.conf cgi.txt param.conf LICENSE \
-       "${APP}" "zz_${APP}_proxy.conf" bin html )
+       "${APP}" "zz_${APP}_proxy.conf" postinstall.sh bin html )
   log "built ${eap} ($(stat -c%s "${eap}") bytes)"
 }
 

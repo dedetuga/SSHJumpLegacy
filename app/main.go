@@ -18,8 +18,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"log/syslog"
 	"net"
 	"net/http"
 	"net/http/fcgi"
@@ -70,14 +72,45 @@ var (
 	reqSeq  uint64
 	connSeq uint64
 	debug   = os.Getenv("SSHJUMP_DEBUG") == "1"
+	sysLog  *syslog.Writer // Axis system log ("Log do app"); nil until initSyslog
 )
 
-// inf logs an important event (always). dbg logs verbose tracing (only when
-// SSHJUMP_DEBUG=1).
-func inf(format string, a ...interface{}) { log.Printf(format, a...) }
+// initSyslog connects to the local syslog with tag=appName so events show up in
+// the camera's per-app system log (systemlog.cgi?appname=<app>). Best-effort.
+func initSyslog() {
+	if w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, appName); err == nil {
+		sysLog = w
+	}
+}
+
+// emit writes to the local log (file + stderr) and, when connected, mirrors the
+// line to the Axis system log at the given severity so it appears in "Log do app".
+func emit(sev byte, format string, a ...interface{}) {
+	msg := fmt.Sprintf(format, a...)
+	log.Print(msg)
+	if sysLog == nil {
+		return
+	}
+	switch sev {
+	case 'E':
+		_ = sysLog.Err(msg)
+	case 'W':
+		_ = sysLog.Warning(msg)
+	case 'D':
+		_ = sysLog.Debug(msg)
+	default:
+		_ = sysLog.Info(msg)
+	}
+}
+
+// inf/warnf/errf log important events (always). dbg logs verbose tracing (only
+// when SSHJUMP_DEBUG=1). All also go to the Axis system log when available.
+func inf(format string, a ...interface{})   { emit('I', format, a...) }
+func warnf(format string, a ...interface{}) { emit('W', format, a...) }
+func errf(format string, a ...interface{})  { emit('E', format, a...) }
 func dbg(format string, a ...interface{}) {
 	if debug {
-		log.Printf(format, a...)
+		emit('D', format, a...)
 	}
 }
 
@@ -197,7 +230,7 @@ func (s *session) close() {
 		sessions.del(s.id)
 		act.close()
 		_, n := act.idleFor()
-		inf("session %s: closed (active sessions now %d)", s.id, n)
+		inf("session %s closed (active sessions now %d)", s.id[:8], n)
 	})
 }
 
@@ -304,21 +337,21 @@ func connectHandler(w http.ResponseWriter, r *http.Request) {
 	t0 := time.Now()
 	client, err := ssh.Dial("tcp", addr, cfg)
 	if err != nil {
-		inf("connect: ssh.Dial %s FAILED after %s: %v", addr, time.Since(t0), err)
+		errf("connect: %s@%s FAILED after %s: %v", cm.User, addr, time.Since(t0), err)
 		writeJSON(w, 502, map[string]string{"error": "SSH connection failed: " + err.Error()})
 		return
 	}
 	dbg("connect: ssh handshake ok in %s, hostkey=%s", time.Since(t0), fp)
 	sess, err := client.NewSession()
 	if err != nil {
-		dbg("connect: NewSession failed: %v", err)
+		errf("connect: %s@%s NewSession failed: %v", cm.User, addr, err)
 		client.Close()
 		writeJSON(w, 502, map[string]string{"error": "session failed: " + err.Error()})
 		return
 	}
 	modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
 	if err := sess.RequestPty("xterm-256color", cm.Rows, cm.Cols, modes); err != nil {
-		dbg("connect: RequestPty failed: %v", err)
+		errf("connect: %s@%s RequestPty failed: %v", cm.User, addr, err)
 		sess.Close()
 		client.Close()
 		writeJSON(w, 502, map[string]string{"error": "PTY failed: " + err.Error()})
@@ -328,7 +361,7 @@ func connectHandler(w http.ResponseWriter, r *http.Request) {
 	stdout, _ := sess.StdoutPipe()
 	stderr, _ := sess.StderrPipe()
 	if err := sess.Shell(); err != nil {
-		dbg("connect: Shell failed: %v", err)
+		errf("connect: %s@%s Shell failed: %v", cm.User, addr, err)
 		sess.Close()
 		client.Close()
 		writeJSON(w, 502, map[string]string{"error": "shell failed: " + err.Error()})
@@ -345,7 +378,7 @@ func connectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions.put(s)
 	act.open()
-	inf("connect: session %s established to %s@%s", s.id, cm.User, addr)
+	inf("connect: session %s established %s@%s (hostkey %s)", s.id[:8], cm.User, addr, fp)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -525,7 +558,7 @@ func tag(proto string, h http.Handler) http.Handler {
 // ---- idle watchdog ---------------------------------------------------------
 
 func stopSelf() {
-	inf("watchdog: idle >= %s — stopping %s", idleTimeout, appName)
+	warnf("idle for %s with no activity — auto-stopping %s", idleTimeout, appName)
 	q := "/axis-cgi/applications/control.cgi?action=stop&package=" + appName
 	_ = exec.Command("sh", "-c",
 		"curl -s --max-time 5 'http://127.0.0.1"+q+"' >/dev/null 2>&1 || "+
@@ -716,6 +749,7 @@ func main() {
 	if lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
 		log.SetOutput(io.MultiWriter(os.Stderr, lf))
 	}
+	initSyslog()
 
 	inf("==== sshjump %s starting (pid=%d go=%s %s/%s debug=%v) ====",
 		version, os.Getpid(), runtime.Version(), runtime.GOOS, runtime.GOARCH, debug)

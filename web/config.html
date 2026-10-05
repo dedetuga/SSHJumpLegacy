@@ -54,7 +54,7 @@
       <input id="port" value="22" style="flex:1" inputmode="numeric">
     </div>
     <label>Username</label>
-    <input id="user" placeholder="admin">
+    <input id="user" placeholder="admin" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" name="sshjump_target_user" data-lpignore="true" data-1p-ignore data-form-type="other">
     <label>Authentication</label>
     <select id="authType">
       <option value="password">Password</option>
@@ -62,7 +62,7 @@
     </select>
     <div class="pwonly">
       <label>Password</label>
-      <input id="password" type="password">
+      <input id="password" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" name="sshjump_target_pw" data-lpignore="true" data-1p-ignore data-form-type="other">
     </div>
     <div class="keyonly">
       <label>Private key (PEM / OpenSSH)</label>

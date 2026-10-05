@@ -313,8 +313,8 @@ func connectHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "invalid request"})
 		return
 	}
-	dbg("connect: host=%s port=%d user=%s auth=%s hasPassword=%v hasKey=%v cols=%d rows=%d",
-		cm.Host, cm.Port, cm.User, cm.AuthType, cm.Password != "", cm.Key != "", cm.Cols, cm.Rows)
+	dbg("connect: host=%s port=%d user=%q(len=%d) auth=%s pwLen=%d hasKey=%v cols=%d rows=%d",
+		cm.Host, cm.Port, cm.User, len(cm.User), cm.AuthType, len(cm.Password), cm.Key != "", cm.Cols, cm.Rows)
 	if cm.Host == "" || cm.User == "" {
 		dbg("connect: missing host/user")
 		writeJSON(w, 400, map[string]string{"error": "host and username are required"})

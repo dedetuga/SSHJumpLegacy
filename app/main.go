@@ -50,12 +50,18 @@ func env(key, def string) string {
 	return def
 }
 
+// defaultApp is the app/socket name used when SSHJUMP_APP is unset. It can be
+// overridden at build time with -ldflags "-X main.defaultApp=<name>", which is
+// how build.sh produces differently-named variants that don't collide on the
+// /var/run/http/<name>/http socket with other apps built from this code.
+var defaultApp = "sshjump"
+
 var (
-	appName     = env("SSHJUMP_APP", "sshjump")
+	appName     = env("SSHJUMP_APP", defaultApp)
 	idleTimeout = parseDuration(env("SSHJUMP_IDLE_TIMEOUT", "30m"))
-	socketPath  = env("SSHJUMP_SOCKET", "/var/run/http/"+env("SSHJUMP_APP", "sshjump")+"/http")
+	socketPath  = env("SSHJUMP_SOCKET", "/var/run/http/"+env("SSHJUMP_APP", defaultApp)+"/http")
 	tcpAddr     = os.Getenv("SSHJUMP_LISTEN") // if set, serve plain HTTP on TCP (debug)
-	logPath     = env("SSHJUMP_LOG", "/tmp/sshjump.log")
+	logPath     = env("SSHJUMP_LOG", "/tmp/"+env("SSHJUMP_APP", defaultApp)+".log")
 )
 
 func parseDuration(s string) time.Duration {

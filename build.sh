@@ -15,7 +15,7 @@
 #   - qemu-user-static (optional, only for ./build.sh test)
 set -euo pipefail
 
-APP=sshjump
+APP="${APP:-sshjump}"
 VER_MAJOR=1; VER_MINOR=0; VER_MICRO=0
 VERSION="${VER_MAJOR}.${VER_MINOR}.${VER_MICRO}"
 INSTALL_DIR="/usr/local/packages/${APP}"          # where the app lives on the camera
@@ -85,7 +85,7 @@ build_daemon(){
   mkdir -p "${OUT}/bin"
   ( cd "${ROOT}/app" && \
     GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 GOFLAGS=-mod=vendor \
-    "${GO}" build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "${OUT}/bin/${APP}" . )
+    "${GO}" build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.defaultApp=${APP}" -o "${OUT}/bin/${APP}" . )
 }
 
 # --- 3. assemble the .eap (gzip tar; package.conf at root) ------------------
@@ -94,12 +94,19 @@ package(){
   log "packaging ${APP} ${VERSION} for ${soc}"
   local stage="${OUT}/stage"
   rm -rf "${stage}"; mkdir -p "${stage}/bin" "${stage}/html"
+  # packaging/ templates are written with the name "sshjump"; copy them and, for
+  # a differently-named build, rewrite that token so the app name, /local path,
+  # socket path and proxy conf are all consistent (no collision with other apps).
   cp "${ROOT}/packaging/package.conf" "${ROOT}/packaging/cgi.txt" \
      "${ROOT}/packaging/param.conf"   "${ROOT}/packaging/LICENSE" \
-     "${ROOT}/packaging/zz_${APP}_proxy.conf" "${ROOT}/packaging/postinstall.sh" "${stage}/"
+     "${ROOT}/packaging/postinstall.sh" "${stage}/"
+  cp "${ROOT}/packaging/zz_sshjump_proxy.conf" "${stage}/zz_${APP}_proxy.conf"
+  if [ "${APP}" != "sshjump" ]; then
+    sed -i "s/sshjump/${APP}/g" "${stage}/package.conf" "${stage}/postinstall.sh" "${stage}/zz_${APP}_proxy.conf"
+  fi
   cp "${OUT}/${APP}"     "${stage}/${APP}"        # PIE launcher (package root)
   cp "${OUT}/bin/${APP}" "${stage}/bin/${APP}"    # real Go daemon
-  cp "${ROOT}"/web/*     "${stage}/html/"
+  cp "${ROOT}"/web/*     "${stage}/html/"         # config.html uses relative URLs — no rename needed
   chmod 755 "${stage}/${APP}" "${stage}/bin/${APP}"
   local eap="${OUT}/${APP}_${VER_MAJOR}_${VER_MINOR}_${VER_MICRO}_${soc}_mipsisa32r2el.eap"
   ( cd "${stage}" && tar czf "${eap}" package.conf cgi.txt param.conf LICENSE \

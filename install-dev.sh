@@ -14,7 +14,7 @@
 #  * STARTMODE=once: after 30 min idle the daemon exits and stays stopped.
 #  * Verbose logs are off by default; set SSHJUMP_DEBUG=1 in the environment for
 #    tracing. Logs go to /tmp/sshjump.log.
-APP=sshjump
+APP="${APP:-sshjump}"
 # .eap path: pass as $1, else auto-detect the artpec4/artpec5 build in /tmp
 EAP="${1:-$(ls -1 /tmp/${APP}_1_0_0_*mipsisa32r2el.eap 2>/dev/null | head -1)}"
 [ -n "$EAP" ] && [ -f "$EAP" ] || { echo "no .eap found in /tmp (pass its path as an argument)"; exit 1; }

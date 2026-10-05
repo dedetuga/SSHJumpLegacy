@@ -344,7 +344,14 @@ func connectHandler(w http.ResponseWriter, r *http.Request) {
 	client, err := ssh.Dial("tcp", addr, cfg)
 	if err != nil {
 		errf("connect: %s@%s FAILED after %s: %v", cm.User, addr, time.Since(t0), err)
-		writeJSON(w, 502, map[string]string{"error": "SSH connection failed: " + err.Error()})
+		hint := ""
+		if cm.AuthType != "key" {
+			// Diagnostic the operator can see without shell access: the lengths
+			// actually received. If these don't match what you typed, the browser
+			// autofilled a different value (e.g. the camera's admin password).
+			hint = fmt.Sprintf(" [received: user %q (%d chars), password %d chars]", cm.User, len(cm.User), len(cm.Password))
+		}
+		writeJSON(w, 502, map[string]string{"error": "SSH connection failed: " + err.Error() + hint})
 		return
 	}
 	dbg("connect: ssh handshake ok in %s, hostkey=%s", time.Since(t0), fp)

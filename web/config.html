@@ -178,10 +178,14 @@
 
   function poll(){
     fetch(ep("health")).then(function(r){return r.json();}).then(function(j){
-      $("tmo").textContent = j.idleTimeout;
-      var mtch = /(\d+)m/.exec(j.idleTimeout), tmoSec = mtch ? parseInt(mtch[1],10)*60 : 1800;
-      var remain = Math.max(0, tmoSec - j.idleSeconds), mm = Math.floor(remain/60), ss = remain%60;
-      $("idle").textContent = "sessions: "+j.sessions+(j.sessions>0?(" · idle closes in "+mm+"m"+(ss<10?"0":"")+ss+"s"):"");
+      var it = j.idleTimeout, mtch = /(\d+)m/.exec(it||"");
+      var tmoSec = mtch ? parseInt(mtch[1],10)*60 : (parseInt(it,10)||1800);
+      var mins = Math.round(tmoSec/60);
+      $("tmo").textContent = mins + " min";
+      var sess = (typeof j.sessions === "number") ? j.sessions : 0;
+      var idleSec = (typeof j.idleSeconds === "number") ? j.idleSeconds : 0;
+      var remain = Math.max(0, tmoSec - idleSec), mm = Math.floor(remain/60), ss = remain%60;
+      $("idle").textContent = "sessions: "+sess+(sess>0?(" · idle closes in "+mm+"m"+(ss<10?"0":"")+ss+"s"):"");
     }).catch(function(){ $("idle").textContent = "daemon unreachable"; });
   }
   poll(); setInterval(poll, 5000);

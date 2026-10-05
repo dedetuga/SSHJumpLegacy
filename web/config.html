@@ -61,8 +61,8 @@
       <option value="key">Private key</option>
     </select>
     <div class="pwonly">
-      <label>Password</label>
-      <input id="password" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" name="sshjump_target_pw" data-lpignore="true" data-1p-ignore data-form-type="other">
+      <label>Password <span id="pwcount" style="opacity:.6;font-weight:normal"></span></label>
+      <input id="password" type="password" readonly onfocus="this.removeAttribute('readonly')" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" name="sshjump_target_pw" data-lpignore="true" data-1p-ignore data-form-type="other">
     </div>
     <div class="keyonly">
       <label>Private key (PEM / OpenSSH)</label>
@@ -189,6 +189,15 @@
     }).catch(function(){ $("idle").textContent = "daemon unreachable"; });
   }
   poll(); setInterval(poll, 5000);
+
+  // Live password-length indicator — lets you confirm the field holds exactly
+  // what you typed (and catches browser autofill replacing it).
+  (function(){
+    var pw = $("password"), c = $("pwcount");
+    function upd(){ c.textContent = pw.value.length ? "("+pw.value.length+" chars)" : ""; }
+    pw.addEventListener("input", upd); pw.addEventListener("change", upd);
+    setInterval(upd, 500); upd();
+  })();
 })();
 </script>
 </body>
